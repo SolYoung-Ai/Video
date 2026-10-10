@@ -87,7 +87,7 @@ input[type=checkbox]:checked{background:var(--text);border-color:var(--text)}
 input[type=checkbox]:checked::after{content:'';position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid #0a0a0a;border-width:0 1.5px 1.5px 0;transform:rotate(45deg)}
 
 /* ============ App shell ============ */
-#app{position:fixed;inset:0;top:var(--topbar);overflow-y:auto;overflow-x:hidden}
+#app{position:fixed;inset:0;top:var(--topbar);bottom:52px;overflow-y:auto;overflow-x:hidden}
 .view-error{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;min-height:40vh;color:var(--text2);font-size:13px}
 .view-error .btn{margin-top:6px}
 .ws-empty{color:var(--text3);font-size:12px;padding:24px 10px;text-align:center;line-height:1.7}
@@ -402,3 +402,42 @@ input[type=checkbox]:checked::after{content:'';position:absolute;left:4px;top:1p
 .pal-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;border-radius:8px;cursor:pointer;color:var(--text1);font-size:13.5px}
 .pal-item:hover,.pal-item:focus{background:var(--bg3)}
 .pal-item kbd{font:11px 'JetBrains Mono',monospace;color:var(--text3);border:1px solid var(--border);border-radius:4px;padding:1px 6px}
+
+/* ============ Site footer ============ */
+.site-footer{position:fixed;left:0;right:0;bottom:0;z-index:60;display:flex;align-items:center;justify-content:center;gap:6px;padding:14px 16px 16px;border-top:1px solid var(--border);background:rgba(9,9,9,0.86);backdrop-filter:blur(14px);font:11px/1.6 var(--sans);letter-spacing:.05em;color:var(--text3);text-align:center}
+.site-footer a{color:var(--text2);text-decoration:none;border-bottom:1px solid transparent;transition:color .15s ease,border-color .15s ease}
+.site-footer a:hover{color:var(--text);border-color:var(--text3)}
+body[data-route="project"] .site-footer{display:none}
+body[data-route="project"] #app{bottom:0}
+
+/* ============ v34 — cut review bar / voice listen / style pickers / kbd ============ */
+.ws-quality{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 14px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02);font-size:12px}
+.ws-quality-label{font:10px/1 'JetBrains Mono',monospace;letter-spacing:.16em;color:var(--text3);margin-right:2px;text-transform:uppercase}
+.ws-quality-chip{background:transparent;border:1px solid rgba(255,255,255,.14);color:var(--text2);border-radius:999px;padding:3px 10px;font-size:11.5px;cursor:pointer;transition:border-color .12s ease,color .12s ease}
+.ws-quality-chip:hover{border-color:rgba(255,255,255,.4);color:var(--text)}
+.ws-quality-more{color:var(--text3);font-size:11px}
+
+.nw-listen{margin:10px 0 4px}
+.nw-listen .inp{font-size:13px;line-height:1.5;resize:vertical}
+.nw-style-row{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.nw-style-row label{font:10px/1 'JetBrains Mono',monospace;letter-spacing:.16em;color:var(--text3);text-transform:uppercase}
+.nw-style-row select{min-width:200px}
+
+.btn.xs{padding:3px 8px;font-size:11px;border-radius:6px}
+.nw-vseg{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;background:rgba(255,255,255,.02)}
+.nw-vseg .nw-sc-text{flex:1;font-size:12.5px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nw-vseg .nw-sc-dur{font:11px 'JetBrains Mono',monospace;color:var(--text3)}
+
+.if-style-sel,.if-font-sel{width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text1);border-radius:8px;padding:6px 8px;font-size:13px}
+.if-style-sel option,.if-font-sel option{background:var(--bg2);color:var(--text1);font-size:13px}
+
+.exp-result{margin-top:12px;padding:9px 12px;border:1px solid rgba(168,255,96,.25);background:rgba(168,255,96,.05);color:var(--text1);border-radius:8px;font-size:12.5px;font-family:var(--mono)}
+.exp-result.hidden{display:none}
+
+.st-card-wide{grid-column:1/-1}
+.st-kbd{width:100%;border-collapse:collapse;margin-top:6px}
+.st-kbd td{padding:5px 8px;font-size:12.5px;color:var(--text2);border-bottom:1px solid var(--border);text-align:left}
+.st-kbd kbd{font:11px 'JetBrains Mono',monospace;color:var(--text);background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:2px 7px;white-space:nowrap}
+.st-kbd td:first-child{width:170px}
+
+.tl-playhead{cursor:ew-resize;touch-action:none}
