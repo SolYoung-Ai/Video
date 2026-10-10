@@ -12,9 +12,13 @@ ML.workspace = (function(){
   let tlZoom = 90; /* px per second — CapCut-like zoom */
   let inspectorKind = 'none'; /* video | subtitle | voice | scene */
   let dirtyFlag = true; /* forces full timeline re-render */
+  let clipboardClip = null; /* for ⌘C / ⌘V */
+  let audioEl = null, audioUrl = null, previewingId = null; /* voice preview */
 
   const el = id => root ? root.querySelector(id) : null;
   function qAll(sel){ return root ? Array.from(root.querySelectorAll(sel)) : []; }
+  /* deep clone helper (clipboard/history snapshots must never share refs) */
+  function deep(o){ return JSON.parse(JSON.stringify(o)); }
 
   /* ============ history ============ */
   function snap(){
@@ -30,7 +34,7 @@ ML.workspace = (function(){
   function pushHistory(){
     history = history.slice(0, hIdx+1);
     history.push(snap());
-    if(history.length > 50) history.shift();
+    if(history.length > 100) history.shift();
     hIdx = history.length-1;
     scheduleSave();
   }
@@ -286,6 +290,9 @@ ML.workspace = (function(){
     field(box, Tn('ws.rotation'), rangeHTML('rotation', -180, 180, 1, L.round((c.transform&&c.transform.rotation)||0,0)));
     field(box, Tn('ws.opacity'), rangeHTML('opacity', 0, 1, 0.01, c.opacity));
     field(box, Tn('ws.speed'), rangeHTML('speed', 0.25, 2, 0.05, c.speed));
+    field(box, Tn('ws.volume'), rangeHTML('volume', 0, 1.5, 0.05, c.volume!=null?c.volume:1));
+    field(box, Tn('ws.muted'), '<input type="checkbox" data-k="muted"'+(c.muted?' checked':'')+'>');
+    field(box, Tn('ws.crop'), selectHTML('crop', ['cover','contain','fill'], (c.transform&&c.transform.crop)||c.crop||'cover'));
     field(box, Tn('ws.source')+' '+Tn('ws.start'), numberHTML('sourceStart', L.round(c.sourceStart,2)));
     field(box, Tn('ws.source')+' '+Tn('ws.end'), numberHTML('sourceEnd', L.round(c.sourceEnd,2)));
     field(box, Tn('ws.replace'), '<button class="btn btn-ghost sm" data-act="replace">'+Tn('ws.replace')+'</button>');
@@ -296,17 +303,28 @@ ML.workspace = (function(){
     inspectorKind = 'subtitle';
     box.innerHTML = '';
     box.insertAdjacentHTML('beforeend', '<div class="if-title">'+Tn('sub.title')+'</div>');
+    const presetKeys = Object.keys(ML.subtitle.STYLE_PRESETS);
+    field(box, Tn('sub.style'), '<select data-k="styleKey" class="if-style-sel"><option value=""'+(c.style.styleKey?'':' selected')+'>'+Tn('ws.custom')+'</option>'+presetKeys.map(k=>'<option value="'+k+'"'+(c.style.styleKey===k?' selected':'')+'>'+Tn('sub.st.'+k)+'</option>').join('')+'</select>');
     field(box, Tn('ws.text'), '<textarea data-k="text" rows="2">'+esc(c.text||'')+'</textarea>');
-    field(box, Tn('sub.font'), selectHTML('font', ['Inter, PingFang SC, sans-serif','Georgia, serif','JetBrains Mono, monospace','PingFang SC, sans-serif'], c.style.font||'Inter, PingFang SC, sans-serif'));
+    field(box, Tn('sub.font'), '<select data-k="font" class="if-font-sel">'+FONT_OPTIONS.map(f=>'<option value="'+esc(f.family)+'"'+(c.style.font===f.family?' selected':'')+' style="font-family:'+esc(f.family)+'">'+esc(f.label)+'</option>').join('')+'</select>');
     field(box, Tn('sub.size'), rangeHTML('size', 20, 90, 1, c.style.size||46));
     field(box, Tn('sub.weight'), selectHTML('weight', [400,500,600,700,800], c.style.weight||600));
     field(box, Tn('sub.color'), colorHTML('color', c.style.color||'#FFFFFF'));
     field(box, Tn('sub.highlight'), '<input type="checkbox" data-k="highlight"'+(c.style.highlight!==false?' checked':'')+'>');
     field(box, Tn('sub.pos'), rangeHTML('posY', 0.1, 0.95, 0.01, c.style.posY!=null?c.style.posY:0.78));
+    field(box, Tn('ws.align'), selectHTML('align', ['center','left','right'], c.style.align||'center'));
     field(box, Tn('ws.bg'), '<input type="checkbox" data-k="bg"'+(c.style.bg!==false?' checked':'')+'>');
     field(box, Tn('ws.shadow'), '<input type="checkbox" data-k="shadow"'+(c.style.shadow!==false?' checked':'')+'>');
     field(box, Tn('sub.anim'), selectHTML('animation', ['rise','fade','pop','none'], c.style.animation||'rise'));
   }
+  const FONT_OPTIONS = [
+    { family:'Inter, "Noto Sans SC", sans-serif', label:'Sans · Inter / 黑体' },
+    { family:'"Noto Serif SC", serif', label:'Serif · 宋体' },
+    { family:'"LXGW WenKai", "Kaiti SC", serif', label:'Kai · 楷书手写' },
+    { family:'"Space Grotesk", "Noto Sans SC", sans-serif', label:'Grotesk · 科技' },
+    { family:'"JetBrains Mono", monospace', label:'Mono · 等宽' },
+    { family:'"Playfair Display", "Noto Serif SC", serif', label:'Display · 衬线标题' }
+  ];
   function renderVoiceInspector(box, c){
     inspectorKind = 'voice';
     const vs = project.voiceSegments.find(x=>x.id===c.voiceId);
@@ -356,16 +374,26 @@ ML.workspace = (function(){
       case 'x': c.transform.x = L.clamp(parseFloat(v)||0, -1, 1); break;
       case 'y': c.transform.y = L.clamp(parseFloat(v)||0, -1, 1); break;
       case 'rotation': c.transform.rotation = L.clamp(parseFloat(v)||0, -180, 180); break;
+      case 'crop': c.transform.crop = v; break;
       case 'opacity': c.opacity = L.clamp(parseFloat(v)||1, 0, 1); break;
       case 'speed': c.speed = L.clamp(parseFloat(v)||1, 0.25, 2); break;
       case 'volume': c.volume = L.clamp(parseFloat(v)||1, 0, 1.5); break;
+      case 'muted': c.muted = !!v; break;
       case 'timelineStart': c.timelineStart = Math.max(0, parseFloat(v)||0); c.timelineEnd = Math.max(c.timelineStart+0.2, c.timelineEnd); break;
       case 'timelineEnd': c.timelineEnd = Math.max(c.timelineStart+0.2, parseFloat(v)||0); break;
       case 'sourceStart': c.sourceStart = Math.max(0, parseFloat(v)||0); break;
       case 'sourceEnd': c.sourceEnd = Math.max(c.sourceStart+0.2, parseFloat(v)||0); break;
-      case 'text': c.text = String(v); c.lines = ML.subtitle.wrapLines(c.text); syncSceneText(c.sceneId, c.text); break;
-      case 'font': case 'size': case 'weight': case 'color': case 'highlight': case 'bg': case 'shadow': case 'posY': case 'animation':
+      case 'text': c.text = String(v); c.lines = ML.subtitle.wrapLines(c.text, (c.style&&c.style.maxChars)||22); syncSceneText(c.sceneId, c.text); break;
+      case 'font': case 'size': case 'weight': case 'color': case 'highlight': case 'bg': case 'shadow': case 'posY': case 'animation': case 'align':
         c.style = c.style||{}; c.style[k] = v; break;
+      case 'styleKey': {
+        c.style = c.style||{};
+        const preset = ML.subtitle.stylePreset(v);
+        if(preset){ Object.assign(c.style, preset); c.style.styleKey = v; }
+        else { c.style.styleKey = ''; }
+        c.lines = ML.subtitle.wrapLines(c.text||'', (c.style&&c.style.maxChars)||22);
+        break;
+      }
     }
   }
   function syncSceneText(sceneId, text){
@@ -478,21 +506,62 @@ ML.workspace = (function(){
       ML.lib.toast(Tn('media.added'));
     });
   }
+  /* ============ voice preview — real audio first, browser synth labelled ============ */
+  function stopVoicePreview(){
+    if(audioEl){ try{ audioEl.pause(); audioEl.src=''; }catch(e){} audioEl=null; }
+    if(audioUrl){ try{ URL.revokeObjectURL(audioUrl); }catch(e){} audioUrl=null; }
+    ML.voice.stopPreview();
+    previewingId = null;
+  }
+  async function previewSegment(v){
+    stopVoicePreview();
+    previewingId = v.id;
+    renderVoicePane();
+    const blob = await ML.voice.loadAudio(v).catch(()=>null);
+    if(previewingId !== v.id) return; /* user switched away meanwhile */
+    if(blob){
+      try{
+        audioUrl = URL.createObjectURL(blob);
+        audioEl = new Audio(audioUrl);
+        audioEl.onended = ()=>{ stopVoicePreview(); renderVoicePane(); };
+        audioEl.onerror = ()=>{ stopVoicePreview(); L.toast(Tn('voice.playFail'), true); renderVoicePane(); };
+        await audioEl.play();
+      }catch(e){
+        stopVoicePreview(); L.toast(Tn('voice.playFail'), true); renderVoicePane();
+      }
+    } else {
+      /* no real audio (DEV MOCK or unloaded) — browser speech synthesis, honest label */
+      const ok = await ML.voice.preview(v.text, v.voiceId);
+      previewingId = null;
+      if(!ok) L.toast(Tn('voice.playFail'), true);
+      renderVoicePane();
+    }
+  }
+  async function previewText(text, voiceId){
+    stopVoicePreview();
+    const ok = await ML.voice.preview(text, voiceId);
+    if(!ok) L.toast(Tn('voice.playFail'), true);
+  }
+
   function renderVoicePane(pane){
     pane.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.className = 'ws-pane ws-voice-pane';
     const vs = project.voiceSegments||[];
     const anyReal = vs.some(v=>v.status==='real');
-    if(!anyReal){
+    if(!vs.length){
       wrap.innerHTML = '<div class="ws-empty">'+Tn('voice.mock')+'</div>';
       pane.appendChild(wrap); return;
     }
+    if(!anyReal) wrap.innerHTML = '<div class="ws-empty">'+Tn('voice.mock')+'</div>';
     vs.forEach(v=>{
       const row = document.createElement('div');
       row.className = 'sc-row';
       const sc = project.scenes.find(x=>x.id===v.sceneId);
-      row.innerHTML = '<div class="sc-head"><span class="sc-idx">'+String(sc?sc.order:'?').padStart(2,'0')+'</span><span class="sc-intent">'+esc(v.voiceId||'')+'</span><span class="sc-dur">'+L.round(v.duration,1)+'s</span></div><div class="sc-text">'+esc(v.text||'')+'</div>';
+      const isPlaying = previewingId===v.id;
+      row.innerHTML = '<div class="sc-head"><span class="sc-idx">'+String(sc?sc.order:'?').padStart(2,'0')+'</span><span class="sc-intent">'+esc(v.voiceId||'')+'</span><span class="sc-dur">'+L.round(v.duration,1)+'s</span></div>'+
+        '<div class="sc-text">'+esc(v.text||'')+'</div>'+
+        '<div class="sc-actions"><button class="btn btn-ghost sm" data-act="playVoice" data-id="'+v.id+'">'+(isPlaying?Tn('voice.stop'):Tn('voice.listen'))+'</button></div>';
       wrap.appendChild(row);
     });
     pane.appendChild(wrap);
@@ -551,6 +620,115 @@ ML.workspace = (function(){
     c.locked = !c.locked; pushHistory(); dirtyFlag = true; renderTimeline();
   }
 
+  /* ============ clipboard / marker ============ */
+  function copySelectedClip(){
+    const c = project.timeline.clips.find(x=>x.id===selectedClipId);
+    if(!c) return;
+    clipboardClip = deep(c);
+    L.toast(Tn('ws.copied'));
+  }
+  function pasteClipboard(){
+    if(!clipboardClip) return;
+    const o = clipboardClip;
+    const dur = o.timelineEnd - o.timelineStart;
+    const clip = ML.timeline.newClip(o.track, {
+      sceneId: o.sceneId, assetId: o.assetId, voiceId: o.voiceId,
+      text: o.text, lines: o.lines, style: deep(o.style),
+      sourceStart: o.sourceStart, sourceEnd: o.sourceEnd,
+      timelineStart: currentTime, timelineEnd: currentTime + dur,
+      scale: o.transform?o.transform.scale:1, x: o.transform?o.transform.x:0, y: o.transform?o.transform.y:0,
+      rotation: o.transform?o.transform.rotation:0, crop: o.transform?o.transform.crop:undefined,
+      speed: o.speed, volume: o.volume, muted: o.muted, opacity: o.opacity, transition: o.transition
+    });
+    ML.timeline.addClip(project, clip);
+    selectedClipId = clip.id;
+    pushHistory(); dirtyFlag = true; renderTimeline(); renderInspector(); renderFrame();
+  }
+  function duplicateSelectedAsNew(){
+    const c = project.timeline.clips.find(x=>x.id===selectedClipId);
+    if(!c) return;
+    const dur = c.timelineEnd - c.timelineStart;
+    const clip = ML.timeline.newClip(c.track, {
+      sceneId: c.sceneId, assetId: c.assetId, voiceId: c.voiceId,
+      text: c.text, lines: c.lines, style: deep(c.style),
+      sourceStart: c.sourceStart, sourceEnd: c.sourceEnd,
+      timelineStart: c.timelineEnd, timelineEnd: c.timelineEnd + dur,
+      scale: c.transform?c.transform.scale:1, x: c.transform?c.transform.x:0, y: c.transform?c.transform.y:0,
+      rotation: c.transform?c.transform.rotation:0, crop: c.transform?c.transform.crop:undefined,
+      speed: c.speed, volume: c.volume, muted: c.muted, opacity: c.opacity, transition: c.transition
+    });
+    ML.timeline.addClip(project, clip);
+    selectedClipId = clip.id;
+    pushHistory(); dirtyFlag = true; renderTimeline(); renderInspector(); renderFrame();
+  }
+  function addMarkerAt(t){
+    const sc = project.scenes.find(x=>{ const s=x._tlStart||0; return t>=s && t < s+(x.duration||1); });
+    if(!sc){ L.toast(Tn('tl.markerFail'), true); return; }
+    const clip = ML.timeline.newClip('marker', {
+      sceneId: sc.id, text: Tn('tl.marker')+' '+t.toFixed(1)+'s',
+      timelineStart: t, timelineEnd: t+0.05
+    });
+    ML.timeline.addClip(project, clip);
+    pushHistory(); dirtyFlag = true; renderTimeline();
+    L.toast(Tn('tl.markerAdded'));
+  }
+
+  /* ============ keyboard — single Shortcut Manager ============ */
+  function isTypingTarget(ev){
+    const t = ev.target;
+    if(!t) return false;
+    return t.tagName==='TEXTAREA' || t.tagName==='INPUT' || t.tagName==='SELECT' ||
+      (t.isContentEditable) || t.closest && !!t.closest('[contenteditable]');
+  }
+  function onKeyDown(ev){
+    /* focus protection: never hijack keys while typing/editing */
+    if(isTypingTarget(ev)) return;
+    const meta = ev.metaKey || ev.ctrlKey;
+    const shift = ev.shiftKey;
+    if(meta && ev.code==='KeyZ'){ ev.preventDefault(); shift ? redo() : undo(); return; }
+    if(meta && ev.code==='KeyS'){ ev.preventDefault(); saveNow(); return; }
+    if(meta && ev.code==='KeyC'){ ev.preventDefault(); copySelectedClip(); return; }
+    if(meta && ev.code==='KeyV'){ ev.preventDefault(); pasteClipboard(); return; }
+    if(meta && ev.code==='KeyD'){ ev.preventDefault(); duplicateSelectedAsNew(); return; }
+    switch(ev.key){
+      case ' ': ev.preventDefault(); toggle(); break;
+      case 'Delete': case 'Backspace': if(selectedClipId){ ev.preventDefault(); doDelete(); } break;
+      case 's': case 'S': doSplit(); break;
+      case 'ArrowLeft': ev.preventDefault(); shift ? seek(currentTime-1) : stepFrame(-1); break;
+      case 'ArrowRight': ev.preventDefault(); shift ? seek(currentTime+1) : stepFrame(1); break;
+      case 'Home': ev.preventDefault(); seek(0); break;
+      case 'End': ev.preventDefault(); seek(duration()); break;
+      case 'm': case 'M': addMarkerAt(currentTime); break;
+      case '=': case '+': applyZoom(tlZoom*1.3); break;
+      case '-': case '_': applyZoom(tlZoom/1.3); break;
+      case 'Escape': selectedClipId = null; selectedSceneId = null; renderTimeline(); renderInspector(); break;
+    }
+    if(shift && ev.key==='Z'){ ev.preventDefault(); applyZoomFit(); }
+  }
+  function applyZoomFit(){
+    const d = Math.max(0.1, duration());
+    const row = el('.tl-tracks');
+    const w = row ? row.clientWidth : 900;
+    tlZoom = L.clamp(Math.round(w / d), 30, 300);
+    const zv = el('#tlZoomVal'); if(zv) zv.textContent = Math.round(tlZoom/90*100)+'%';
+    renderTimeline();
+  }
+  function applyZoom(z){
+    tlZoom = L.clamp(Math.round(z), 30, 300);
+    const zv = el('#tlZoomVal'); if(zv) zv.textContent = Math.round(tlZoom/90*100)+'%';
+    renderTimeline();
+  }
+
+  /* ============ quality bar — real rule-based review of the cut ============ */
+  function renderQualityBar(){
+    const bar = el('.ws-quality');
+    if(!bar) return;
+    const w = (project.quality && project.quality.warnings) || [];
+    if(!w.length){ bar.style.display = 'none'; bar.innerHTML=''; return; }
+    bar.style.display = 'flex';
+    bar.innerHTML = '<span class="ws-quality-label">'+Tn('ae.quality')+'</span>'+w.slice(0,4).map(x=>'<button class="ws-quality-chip" data-act="goWarning" data-id="'+x.sceneId+'">'+esc(x.message||x.type)+'</button>').join('')+(w.length>4?'<span class="ws-quality-more">+'+(w.length-4)+'</span>':'');
+  }
+
   /* ============ regen (scene-level) ============ */
   async function regenVisual(sceneId){
     await ML.autoedit.regenVisual(project, sceneId);
@@ -596,15 +774,18 @@ ML.workspace = (function(){
           break;
         }
         case 'useAsset': selectAsset(act.dataset.id); break;
+        case 'playVoice': previewSegment(project.voiceSegments.find(v=>v.id===act.dataset.id) || {id:act.dataset.id, text:'', voiceId:''}); break;
+        case 'stopVoice': stopVoicePreview(); renderVoicePane(); break;
+        case 'goWarning': {
+          const wsc = project.scenes.find(x=>x.id===act.dataset.id);
+          if(wsc){ const s = wsc._tlStart||0; seek(s+0.01); selectedSceneId = wsc.id; leftTab='script'; renderLeft(); syncScript(); }
+          break;
+        }
       }
     });
     root.addEventListener('input', onInspectorChange);
     root.addEventListener('change', onInspectorChange);
-    root.addEventListener('keydown', ev=>{
-      if(ev.target && (ev.target.tagName==='TEXTAREA'||ev.target.tagName==='INPUT')) return;
-      if(ev.key===' ') { ev.preventDefault(); toggle(); }
-      if(ev.key==='Delete'||ev.key==='Backspace'){ if(selectedClipId) doDelete(); }
-    });
+    root.addEventListener('keydown', onKeyDown);
     const tabs = qAll('.ws-tab');
     tabs.forEach(t=>t.addEventListener('click', ()=>{
       leftTab = t.dataset.tab; renderLeft();
@@ -623,13 +804,31 @@ ML.workspace = (function(){
     }
     /* timeline zoom controls */
     const zoomIn = el('[data-act=zoomIn]'), zoomOut = el('[data-act=zoomOut]');
-    const applyZoom = z=>{
-      tlZoom = L.clamp(Math.round(z), 30, 300);
-      const zv = el('#tlZoomVal'); if(zv) zv.textContent = Math.round(tlZoom/90*100)+'%';
-      renderTimeline();
-    };
     if(zoomIn) zoomIn.addEventListener('click', ()=>applyZoom(tlZoom*1.3));
     if(zoomOut) zoomOut.addEventListener('click', ()=>applyZoom(tlZoom/1.3));
+    /* draggable playhead */
+    const ph = el('.tl-playhead');
+    if(ph){
+      ph.addEventListener('pointerdown', ev=>{
+        ev.preventDefault(); ev.stopPropagation();
+        ph.setPointerCapture && ph.setPointerCapture(ev.pointerId);
+        const onMove = e=>{
+          const d = Math.max(0.1, duration());
+          const main = el('.tl-main');
+          if(!main) return;
+          const r = main.getBoundingClientRect();
+          const t = (e.clientX - r.left + main.scrollLeft) / tlZoom;
+          seek(L.clamp(t, 0, d));
+        };
+        const onUp = e=>{
+          ph.releasePointerCapture && ph.releasePointerCapture(e.pointerId);
+          ph.removeEventListener('pointermove', onMove);
+          ph.removeEventListener('pointerup', onUp);
+        };
+        ph.addEventListener('pointermove', onMove);
+        ph.addEventListener('pointerup', onUp);
+      });
+    }
     /* safe area toggle */
     const sf = el('.ws-safearea');
     if(sf) sf.addEventListener('change', ()=>root.querySelector('.ws-canvas-wrap').classList.toggle('safe-on', sf.checked));
@@ -673,6 +872,7 @@ ML.workspace = (function(){
       '<div class="exp-row"><span>'+Tn('ws.tr.voice')+'</span><span class="exp-strong">'+(noRealAudio?Tn('exp.noAudio'):'●')+'</span></div>'+
       (v.ok?'':'<div class="exp-err">'+esc(v.problems.join('; '))+'</div>')+
       '<div class="exp-progress" hidden><div class="exp-bar"><div class="exp-bar-in"></div></div><div class="exp-stage">'+Tn('exp.progress')+'</div></div>'+
+      '<div class="exp-result" hidden></div>'+
       '<div class="exp-actions"><button class="btn" data-exp="go"'+(cap.mp4?'':' disabled')+'>'+Tn('exp.start')+'</button><button class="btn btn-ghost" data-exp="cancel" hidden>'+Tn('exp.cancel')+'</button><button class="btn btn-ghost" data-exp="srt">'+Tn('exp.srt')+'</button></div>'+
       (cap.mp4?'':'<div class="exp-err">'+Tn('exp.unavailable')+'</div>'),
     ()=>{}, false);
@@ -696,7 +896,15 @@ ML.workspace = (function(){
             const res = await ML.export.exportMP4(project, { fps:30, base:1080, bitrate:8 }, onProg);
             onProg(Tn('exp.complete'), 100);
             ML.lib.download(res.blob, res.name);
-            setTimeout(()=>{ pb.hidden = true; goBtn.disabled=false; cancelBtn.hidden=true; }, 400);
+            /* verified result: real file size + measured duration */
+            const sizeMB = (res.blob.size/1048576).toFixed(1);
+            const durOut = L.round(duration(), 2);
+            const resBox = box.querySelector('.exp-result');
+            if(resBox){
+              resBox.hidden = false;
+              resBox.innerHTML = '✓ '+Tn('exp.verified')+' — '+esc(res.name)+' · '+sizeMB+' MB · '+durOut+'s';
+            }
+            setTimeout(()=>{ pb.hidden = true; goBtn.disabled=false; cancelBtn.hidden=true; }, 600);
           }catch(err){
             ML.lib.toast(err && err.message==='cancelled' ? Tn('ae.cancelled') : String(err&&err.message||err), true);
             pb.hidden = true; goBtn.disabled=false; cancelBtn.hidden=true;
@@ -709,7 +917,7 @@ ML.workspace = (function(){
 
   /* ============ mount / unmount ============ */
   function renderAll(){
-    renderTimeline(); renderFrame(); updateTimecode(); renderLeft(); renderInspector(); updateTransport();
+    renderTimeline(); renderFrame(); updateTimecode(); renderLeft(); renderInspector(); updateTransport(); renderQualityBar();
     const nameEl = el('.ws-proj-name');
     if(nameEl) nameEl.textContent = project.name||Tn('proj.untitled');
     const ratioEl = el('.ws-ratio');
@@ -743,6 +951,7 @@ ML.workspace = (function(){
         '<button class="btn btn-ghost sm" data-act="save">'+(ML.i18n.lang==='zh'?'保存':'Save')+'</button>'+
         '<button class="btn btn-primary sm ws-export" data-act="export">'+Tn('exp.start')+'</button>'+
       '</div>'+
+      '<div class="ws-quality"></div>'+
       '<div class="ws-body">'+
         '<aside class="ws-left">'+
           '<div class="ws-tabs"><button class="ws-tab on" data-tab="script">'+Tn('ws.tabsScript')+'</button><button class="ws-tab" data-tab="media">'+Tn('ws.tabsMedia')+'</button><button class="ws-tab" data-tab="voice">'+Tn('ws.tabsVoice')+'</button></div>'+
@@ -817,6 +1026,7 @@ ML.workspace = (function(){
   }
   function unmount(){
     stop();
+    stopVoicePreview();
     ML.voice.stopPreview();
     if(saveTimer) clearTimeout(saveTimer);
     root = null; ctx = null; project = null; projectId = null;
