@@ -47,6 +47,7 @@ ML.subtitle = (function(){
     return STYLE_PRESETS[key] ? Object.assign({}, STYLE_PRESETS[key]) : null;
   }
   function resolveStyle(styleObj){
+    /* merge preset + per-subtitle overrides onto the default base */
     const base = defaultStyle();
     const key = styleObj && styleObj.styleKey;
     const preset = key ? stylePreset(key) : null;
@@ -57,6 +58,7 @@ ML.subtitle = (function(){
 
   function wrapLines(text, maxChars){
     maxChars = maxChars || MAX_CHARS;
+    /* split into ≤2 lines, prefer natural breaks (，。、/ spaces) */
     const clean = String(text||'').replace(/\s+/g,' ').trim();
     if(!clean) return [' '];
     if(clean.length <= maxChars) return [clean];
@@ -76,6 +78,7 @@ ML.subtitle = (function(){
     return lines;
   }
 
+  /* build subtitle for a scene from voice timing (sentence-level, never fake word timestamps) */
   function fromScene(scene, voiceSeg, style, idx){
     const start = scene._tlStart || 0;
     const dur = voiceSeg ? voiceSeg.duration : (scene.duration || 2.5);
@@ -92,19 +95,21 @@ ML.subtitle = (function(){
       font: 'Inter, "PingFang SC", sans-serif',
       size: 46, weight: 600, color: '#FFFFFF',
       highlight: true, highlightColor: '#FFFFFF',
-      posY: 0.78,
+      posY: 0.78, /* 0..1 of height; 0.78 sits inside 9:16 safe area */
       bg: true, bgColor: 'rgba(0,0,0,0.35)', radius: 8,
       shadow: true, animation: 'rise', align: 'center', tracking: 0,
       maxChars: 22, lines: 2, styleKey: ''
     };
   }
 
+  /* rebuild subtitle text/lines for a scene (edited text keeps timing) */
   function updateText(sub, text){
     sub.text = text;
     sub.lines = wrapLines(text, (sub.style&&sub.style.maxChars)||MAX_CHARS);
     return sub;
   }
 
+  /* highlight keywords inside a line → returns [{t, hl}] segments */
   function segments(line, keywords, enabled){
     if(!enabled || !keywords || !keywords.length) return [{ t: line, hl: false }];
     const out = [];

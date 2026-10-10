@@ -18,11 +18,13 @@ ML.autoedit = (function(){
     job.status = 'processing'; job.stage = Tn('ae.stage.script'); job.progress = 4;
     const tick = (stage, p) => { if(job.status==='cancelled') throw new Error('cancelled'); job.stage = stage; job.progress = p; };
     try{
+      /* 1 — script split */
       let scenes = ML.script.analyze(project.scriptText);
       if(!scenes.length) throw new Error('empty_script');
       project.scenes = scenes;
       tick(Tn('ae.stage.voice'), 18);
 
+      /* 2 — voice segments (voice first: duration drives timing) */
       const vseg = [];
       for(let i=0;i<scenes.length;i++){
         const s = scenes[i];
@@ -35,6 +37,7 @@ ML.autoedit = (function(){
       project.voiceSegments = vseg;
       tick(Tn('ae.stage.match'), 45);
 
+      /* 3 — match visuals */
       const assets = project.assets.filter(a=>a && a.id);
       const matches = ML.matcher.matchAll(scenes, assets, project.ratio, { threshold: 10 });
       const matchMap = {};
@@ -45,6 +48,7 @@ ML.autoedit = (function(){
       });
       tick(Tn('ae.stage.timeline'), 58);
 
+      /* 4 — build timeline (voice-first timing, style-aware) */
       const style = styleOf(project, opts.style);
       if(project.settings) project.settings.editStyle = style.key;
       project.timeline = { clips: [], duration: 0 };
@@ -55,6 +59,7 @@ ML.autoedit = (function(){
         const seg = v || { id:'v'+L.uid(), sceneId:sc.id, text:sc.text, duration:dur, provider:'DEV_MOCK', voiceId:'Chinese Female 01' };
         if(!v) project.voiceSegments.push(seg);
         sc._tlStart = cursor;
+        /* video clip(s) */
         const asset = sc.assetId ? project.assets.find(a=>a.id===sc.assetId) : null;
         if(asset){
           const needDur = Math.max(0.8, dur * (style.split && sc.multi ? style.clipDurK : 1));
@@ -71,6 +76,7 @@ ML.autoedit = (function(){
             sc.clipIds = sc.clipIds||[]; sc.clipIds.push(clip.id);
           };
           if(style.split && sc.multi && asset.type==='video' && asset.duration >= needDur*1.9){
+            /* two shots from different source ranges — real cut change */
             const mid = Math.min(asset.duration - needDur*0.5, r.start + needDur*1.4);
             mkVideo(r.start, r.start+needDur, cursor, cursor+needDur);
             mkVideo(Math.min(mid, asset.duration-needDur), Math.min(mid+needDur, asset.duration), cursor+needDur, cursor+dur);
@@ -79,13 +85,16 @@ ML.autoedit = (function(){
           }
           sc.clipId = (sc.clipIds||[])[0];
         } else {
+          /* no strong match — leave the gap empty rather than faking */
           sc.matchReasons = sc.matchReasons.length ? sc.matchReasons : [Tn('ae.noMatch')];
         }
+        /* voice clip */
         const vc = ML.timeline.newClip('voice', {
           sceneId: sc.id, voiceId: seg.id, duration: dur,
           timelineStart: cursor, timelineEnd: cursor + dur, speed: 1, volume: 1
         });
         ML.timeline.addClip(project, vc);
+        /* marker */
         const mk = ML.timeline.newClip('marker', {
           sceneId: sc.id, text: Tn('sc.scene')+' '+sc.order,
           timelineStart: cursor, timelineEnd: cursor + 0.05
@@ -96,6 +105,7 @@ ML.autoedit = (function(){
       project.timeline.duration = cursor;
       tick(Tn('ae.stage.subtitle'), 78);
 
+      /* 5 — subtitles */
       const subs = [];
       project.timeline.clips.filter(c=>c.track==='video').sort((a,b)=>a.timelineStart-b.timelineStart).forEach(c=>{
         const sc = scenes.find(x=>x.id===c.sceneId);
@@ -111,6 +121,7 @@ ML.autoedit = (function(){
       project.quality = qualityCheck(project);
       tick(Tn('ae.stage.preview'), 92);
 
+      /* 6 — preview render warm-up */
       await new Promise(r=>setTimeout(r, 30));
       job.status = 'completed'; job.stage = Tn('ae.stage.done'); job.progress = 100;
       return project;
@@ -125,6 +136,7 @@ ML.autoedit = (function(){
     if(currentJob && (currentJob.status==='queued'||currentJob.status==='processing')) currentJob.status = 'cancelled';
   }
 
+  /* ============ editing styles — each really changes edit decisions ============ */
   const STYLES = {
     natural:     { key:'natural',     zoomMin:1.00, zoomMax:1.03, split:false, fade:0,    clipDurK:1.00 },
     fast:        { key:'fast',        zoomMin:1.02, zoomMax:1.06, split:true,  fade:0,    clipDurK:0.80 },
@@ -136,6 +148,9 @@ ML.autoedit = (function(){
     return STYLES[k] ? STYLES[k] : STYLES.natural;
   }
 
+  /* deterministic source-range pick: avoid head black-frames, prefer the middle
+     band, seeded per scene so preview and export always agree. mode:'basic'
+     honestly labels this as heuristic cutting (no semantic locate). */
   function smartSourceRange(asset, needDur, seed){
     if(asset.type!=='video' || !(asset.duration>0)) return { start:0, end:Math.max(0.5, needDur), mode:'static' };
     const dur = asset.duration;
@@ -143,17 +158,19 @@ ML.autoedit = (function(){
     const avail = dur - needDur;
     const head = Math.min(1, avail*0.30), tail = Math.min(1, avail*0.25);
     const rnd = L.mulberry32(seed>>>0);
-    const t = 0.30 + rnd()*0.40;
+    const t = 0.30 + rnd()*0.40; /* middle band */
     const start = head + (avail-head-tail)*t;
     return { start: Math.max(0, start), end: Math.min(dur, start+needDur), mode:'basic' };
   }
 
+  /* per-scene shot zoom derived from style (deterministic) */
   function shotScale(scene, style, asset){
-    if(asset && asset.type==='image') return 1.04;
+    if(asset && asset.type==='image') return 1.04; /* gentle Ken Burns on images */
     const rnd = L.mulberry32(L.hashStr(scene.id)>>>0);
     return L.round(style.zoomMin + rnd()*(style.zoomMax-style.zoomMin), 3);
   }
 
+  /* ============ quality check — honest rule-based review of the cut ============ */
   function qualityCheck(project){
     const warnings = [];
     const scenes = project.scenes||[];
@@ -175,6 +192,7 @@ ML.autoedit = (function(){
     return { warnings };
   }
 
+  /* per-scene regenerate */
   async function regenVisual(project, sceneId){
     const sc = project.scenes.find(x=>x.id===sceneId);
     if(!sc) return;
@@ -184,6 +202,7 @@ ML.autoedit = (function(){
     sc.confidence = m.asset ? m.confidence : 0;
     sc.matchReasons = m.reasons||[];
     sc.weak = m.weak;
+    /* rebuild that scene's video clip(s) in place */
     const style = styleOf(project);
     project.timeline.clips.filter(c=>c.track==='video' && c.sceneId===sceneId).forEach(old=>{
       const idx = project.timeline.clips.indexOf(old);
@@ -207,17 +226,19 @@ ML.autoedit = (function(){
   async function regenVoice(project, sceneId){
     const sc = project.scenes.find(x=>x.id===sceneId);
     if(!sc) return;
-    const oldDur = sc.duration;
+    const oldDur = sc.duration; /* capture BEFORE overwrite — fixes shift bug */
     const seg = await ML.voice.generateSegment(project, sc, {});
     sc.voiceSegmentId = seg.id; sc.duration = seg.duration;
     const old = project.voiceSegments.findIndex(x=>x.sceneId===sceneId);
     if(old>=0) project.voiceSegments[old] = seg; else project.voiceSegments.push(seg);
+    /* shift following clips when duration changed */
     const d = sc.duration - oldDur;
     if(Math.abs(d) > 0.001){
       project.timeline.clips.filter(c=>{ const s = project.scenes.find(x=>x.id===c.sceneId); return s && s.order > sc.order; }).forEach(c=>{
         c.timelineStart += d; c.timelineEnd += d;
       });
     }
+    /* retime this scene's clips */
     project.timeline.clips.filter(c=>c.sceneId===sceneId).forEach(c=>{
       const dur = seg.duration;
       const start = sceneStartOf(project, sceneId);
@@ -232,6 +253,7 @@ ML.autoedit = (function(){
         }
       }
     });
+    /* rebuild subtitle text/timing for the scene */
     const sub = project.timeline.clips.find(c=>c.track==='subtitle' && c.sceneId===sceneId);
     if(sub){ sub.text = sc.text; sub.lines = ML.subtitle.wrapLines(sc.text); const start = sceneStartOf(project, sceneId); sub.timelineStart = start; sub.timelineEnd = start + seg.duration; }
     project.timeline.duration = ML.timeline.durationOf(project);

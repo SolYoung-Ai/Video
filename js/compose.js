@@ -1,7 +1,9 @@
 /* ============ ML.compose — unified composition renderer (Preview = Export) ============ */
+/* Renders a single frame of the FINAL timeline (video + subtitle + voice-driven timing).
+   Used by both workspace preview and export — one code path, no drift. */
 ML.compose = (function(){
   const L = ML.lib;
-  const _els = {};
+  const _els = {}; /* assetId → {video?, img?, url} */
 
   async function loadAsset(asset){
     if(!asset) return null;
@@ -24,6 +26,7 @@ ML.compose = (function(){
   }
   function release(assetId){ const e = _els[assetId]; if(e){ if(e.url) URL.revokeObjectURL(e.url); delete _els[assetId]; } }
 
+  /* draw video/image clip covering canvas — real cover/contain/fill math */
   function drawMedia(ctx, entry, clip, asset, t, W, H){
     const mode = (clip.transform && clip.transform.crop) || clip.crop || 'cover';
     const scale = (clip.transform && clip.transform.scale) || 1;
@@ -35,17 +38,18 @@ ML.compose = (function(){
     if(mode==='fill'){ dw = W; dh = H; }
     else if(mode==='contain'){
       if(ar >= target){ dw = W; dh = W/ar; } else { dh = H; dw = H*ar; }
-    } else {
+    } else { /* cover */
       if(ar >= target){ dh = H; dw = H*ar; } else { dw = W; dh = W/ar; }
     }
     dw *= scale; dh *= scale;
     const dx = (W-dw)/2 + cx, dy = (H-dh)/2 + cy;
 
+    /* Ken Burns for images: gentle push-in across the clip */
     let k = 0;
     if(entry.type==='image'){
       const dur = Math.max(0.1, clip.timelineEnd - clip.timelineStart);
       const p = L.clamp((t - clip.timelineStart)/dur, 0, 1);
-      k = 0.04 * p;
+      k = 0.04 * p; /* up to 4% */
     }
     const s = 1 + k;
     const sw = dw*s, sh = dh*s;
@@ -53,6 +57,7 @@ ML.compose = (function(){
 
     ctx.save();
     let alpha = (clip.opacity!=null?clip.opacity:1);
+    /* cinematic fade transition at clip edges (seconds, style-driven) */
     const fade = (clip.transition && clip.transition>0) ? clip.transition : 0;
     if(fade>0){
       const dur = Math.max(0.1, clip.timelineEnd - clip.timelineStart);
@@ -119,9 +124,11 @@ ML.compose = (function(){
     lines.forEach((ln, i)=>{
       const ly = startY + i*lineH;
       const tw = ctx.measureText(ln).width;
+      /* align-aware line center */
       let x = W/2;
       if(align==='left') x = W*0.10 + tw/2;
       if(align==='right') x = W*0.90 - tw/2;
+      /* background pill */
       if(st.bg){
         ctx.fillStyle = st.bgColor || 'rgba(0,0,0,0.35)';
         const pad = size*0.45, rad = st.radius!=null?st.radius:8;
@@ -129,6 +136,7 @@ ML.compose = (function(){
         ctx.fill();
       }
       if(st.shadow){ ctx.shadowColor='rgba(0,0,0,0.7)'; ctx.shadowBlur = size*0.18; ctx.shadowOffsetY = 2; }
+      /* highlighted keyword segments */
       const segs = ML.subtitle.segments(ln, keywords, st.highlight!==false);
       let drawX = x - ctx.measureText(ln).width/2;
       segs.forEach(sg=>{
@@ -151,6 +159,7 @@ ML.compose = (function(){
     ctx.closePath();
   }
 
+  /* main frame function — single source of truth */
   async function renderFrame(project, t, ctx, W, H){
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, W, H);
@@ -166,6 +175,7 @@ ML.compose = (function(){
     if(sub) drawSubtitle(ctx, sub, t, W, H);
   }
 
+  /* aspect helpers */
   function ratioSize(ratio, base){
     base = base || 1080;
     const map = { '1:1':[base,base], '4:5':[base,Math.round(base*1.25)], '3:4':[Math.round(base*0.75),base],
