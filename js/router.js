@@ -22,6 +22,7 @@ ML.router = (function(){
     /* unmount workspace if leaving it */
     if(current==='project' && ML.workspace){ ML.workspace.unmount(); }
     const navActive = route.name;
+    document.body.dataset.route = route.name;
     document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('on', n.dataset.route===navActive));
     current = route.name; currentId = route.id;
     try{
