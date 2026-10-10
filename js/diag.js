@@ -6,7 +6,8 @@ ML.cap = (function(){
     objectURL: false, imageBitmap: false, raf: false,
     mediarecorder: false, mediaMime: [],
     webcodecs: false, mp4Codec: false, webmCodec: false, webmAlpha: false,
-    gif: false, checked: false
+    gif: false, /* no GIF encoder in the new product — capability removed honestly */
+    checked: false
   };
   function detect(){
     try{
@@ -62,13 +63,14 @@ ML.cap = (function(){
 /* ============ ML.diag — error manager + diagnostics panel ============ */
 ML.diag = (function(){
   const L = ML.lib;
-  const errors = [];
+  const errors = []; /* {module, action, refId, time, message, stack} */
   const MAX = 40;
   let panel = null;
 
   function error(module, action, refId, err){
     const rec = {
-      module: String(module||'APP'), action: String(action||''),
+      module: String(module||'APP'),
+      action: String(action||''),
       refId: refId!==undefined&&refId!==null ? String(refId) : '',
       time: new Date().toISOString().slice(11,19),
       message: String((err&&(err.message||err))||err||'unknown'),
@@ -82,6 +84,7 @@ ML.diag = (function(){
   function list(){ return errors.slice(); }
   function clear(){ errors.length = 0; }
 
+  /* ---------- project validation ---------- */
   function validateProject(p){
     const issues = [];
     if(!p) return { ok:false, issues:['null project'] };
@@ -103,6 +106,7 @@ ML.diag = (function(){
     return res;
   }
 
+  /* ---------- render smoke test: composes a minimal project and renders frames ---------- */
   async function renderSmokeTest(onProgress){
     const p = {
       id:'diag-'+Date.now(), name:'DIAG', ratio:'9:16', fps:30,
@@ -132,6 +136,7 @@ ML.diag = (function(){
     return res;
   }
 
+  /* ---------- storage self-test ---------- */
   async function storageTest(){
     const S = ML.store;
     const key = 'diag-test-'+Date.now();
@@ -148,6 +153,7 @@ ML.diag = (function(){
     return out;
   }
 
+  /* ---------- panel ---------- */
   function esc(s){ return String(s||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
   function row(label, val, cls){
     return '<div class="diag-row"><span>'+esc(label)+'</span><b class="'+(cls||'')+'">'+val+'</b></div>';

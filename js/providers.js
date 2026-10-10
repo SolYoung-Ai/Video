@@ -1,7 +1,10 @@
 /* ============ ML.providers — AI Analysis + TTS Provider registry ============ */
+/* No real API is called. DEV MOCK is the active mode until a provider is configured.
+   Config lives in settings (LocalStorage/IndexedDB) — keys are never hard-coded. */
 ML.providers = (function(){
   const L = ML.lib;
 
+  /* ---- provider config ---- */
   const DEFAULTS = {
     ai:   { provider: 'none', endpoint: '', key: '', model: 'gpt-4o-mini' },
     tts:  { provider: 'none', endpoint: '', key: '', model: '', voice: 'Chinese Female 01' }
@@ -20,6 +23,9 @@ ML.providers = (function(){
   function hasTTS(){ const c = config(); return c && c.tts && c.tts.provider !== 'none' && !!c.tts.endpoint; }
   function mode(){ return { ai: hasAI() ? 'provider' : 'DEV_MOCK', tts: hasTTS() ? 'provider' : 'DEV_MOCK' }; }
 
+  /* ---- AI provider interface ---- */
+  /* analyzeMedia(assetMeta) -> {tags, labels, subjects, scene, mock}
+     analyzeText(text)     -> {keywords, intent, visualNeeds, tone, mock} */
   const AI = {
     async analyzeMedia(meta){
       if(!hasAI()) return mockMediaAnalysis(meta);
@@ -47,6 +53,9 @@ ML.providers = (function(){
     }
   }
 
+  /* ---- TTS provider interface ----
+     synthesize(text, voice) -> { audio: Blob|null, duration, provider, voiceId, status }
+     Mock returns duration estimate only; browser SpeechSynthesis is used for live preview. */
   let _previewActive = false;
 
   const TTS = {
@@ -67,6 +76,7 @@ ML.providers = (function(){
       return { audio: blob, duration: dur, provider: c.provider, voiceId: v, status: 'real' };
     },
     async preview(text, voiceId){
+      /* live listen — browser speech synthesis, never faked audio */
       if(!window.speechSynthesis) return false;
       return new Promise(res=>{
         let settled = false;
@@ -79,6 +89,7 @@ ML.providers = (function(){
         window.speechSynthesis.cancel();
         _previewActive = true;
         window.speechSynthesis.speak(u);
+        /* guard: a cancel() or paused engine must never hang the caller */
         setTimeout(()=>done(false), 45000);
       });
     },
@@ -90,7 +101,9 @@ ML.providers = (function(){
     mode: ()=>hasTTS() ? 'provider' : 'DEV_MOCK'
   };
 
+  /* ---- DEV MOCK analyzers (deterministic, clearly labelled) ---- */
   function estimateDuration(text){
+    /* ~3.2 chars/sec zh, ~2.6 words/sec en, clamped */
     const zh = (text.match(/[\u4e00-\u9fff]/g)||[]).length;
     const rest = text.replace(/[\u4e00-\u9fff]/g,' ').trim();
     const enWords = rest?rest.split(/\s+/).length:0;
@@ -98,6 +111,7 @@ ML.providers = (function(){
     return L.clamp(secs, 1.2, 20);
   }
 
+  /* semantic dictionary used by the local analyzer — keyword → visual tags */
   const VISUAL_MAP = [
     { re:/睡眠|睡觉|睡|失眠|疲惫|累|tired|sleep|insomnia/i, tags:['卧室','夜晚','床','安静','人物','疲惫'] },
     { re:/工作|上班|加班|职场|压力|办公|大脑|高强度|work|office|stress/i, tags:['办公室','电脑','工作','城市','人物'] },
@@ -111,7 +125,7 @@ ML.providers = (function(){
     { re:/创业|副业|老板|生意|startup|business/i, tags:['办公室','电脑','会议','人物'] },
     { re:/旅行|旅游|风景|海边|旅行|travel|beach/i, tags:['风景','旅行','户外','天空'] }
   ];
-  const STOP = new Set(['的','了','是','在','和','也','都','而','及','与','着','或','一个','没有','我们','你们','他们','这个','那个','因为','所以','但是','可能','并不','还是','什么','为什么','怎么','如何','可以','需要','自己','大家','很多','第','个','原因','时间','真的','比','更','要','只','就','对','被','把','让','给','会','能','有','不','很','最','种','些']);
+  const STOP = new Set(['的','了','是','在','和','也','都','而','及','与','着','或','一个','没有','我们','你们','他们','这个','那个','因为','所以','但是','但是','可能','并不','还是','什么','为什么','怎么','如何','可以','需要','自己','大家','很多','第','个','原因','时间','真的','比','更','要','只','就','对','被','把','让','给','会','能','有','不','很','最','种','些']);
 
   function extractKeywords(text){
     const zhTokens = text.match(/[\u4e00-\u9fff]{2,4}/g) || [];
@@ -122,6 +136,8 @@ ML.providers = (function(){
   }
 
   function mockMediaAnalysis(meta){
+    /* deterministic Chinese tags derived from file name + basic metadata —
+       aligned with scene.visualNeeds (also Chinese) so matching works */
     const Lx = ML.lib;
     const name = String(meta.name||'').toLowerCase();
     const dict = [
