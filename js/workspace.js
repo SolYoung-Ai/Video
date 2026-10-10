@@ -200,7 +200,7 @@ ML.workspace = (function(){
     const tc = el('.ws-timecode');
     if(tc) tc.textContent = fmtTime(currentTime)+' / '+fmtTime(d);
   }
-  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
   /* clip interactions (select / drag / trim) */
   function onClipSelect(c){
