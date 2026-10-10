@@ -118,6 +118,9 @@ ML.views = (function(){
           '<div class="nw-body">'+
             '<div class="nw-row"><label>'+Tn('voice.voices')+'</label><select class="inp nw-voice">'+ML.providers.TTS.voices().map(v=>'<option'+(v===ML.providers.config().tts.voice?' selected':'')+'>'+v+'</option>').join('')+'</select></div>'+
             '<div class="nw-row"><label>'+Tn('voice.speed')+'</label><input type="range" class="nw-vspeed" min="0.5" max="2" step="0.1" value="1"><span class="nw-vspeed-v">1.0x</span></div>'+
+            '<div class="nw-listen"><textarea class="inp nw-listen-text" rows="2">'+Tn('voice.listenText')+'</textarea>'+
+              '<div class="nw-actions"><button class="btn btn-ghost" data-act="listenVoice">'+Tn('voice.listen')+'</button><button class="btn btn-ghost" data-act="stopListen" hidden>'+Tn('voice.stop')+'</button></div>'+
+            '</div>'+
             '<div class="nw-actions"><button class="btn" data-act="genVoice">'+Tn('voice.gen')+'</button></div>'+
             '<div class="nw-voice-segs"></div>'+
             (ML.providers.hasTTS()?'':'<div class="nw-mock">'+Tn('voice.mock')+'</div>')+
@@ -125,6 +128,7 @@ ML.views = (function(){
         '</section>'+
       '</div>'+
       '<div class="nw-bottom">'+
+        '<div class="nw-style-row"><label>'+Tn('ae.style')+'</label><select class="inp nw-style">'+Object.keys(ML.autoedit.STYLES).map(k=>'<option value="'+k+'">'+ML.autoedit.STYLES[k].label+'</option>').join('')+'</select></div>'+
         '<button class="btn btn-primary btn-lg" data-act="autoEdit">'+Tn('ae.cta')+'</button>'+
         '<div class="ae-progress" hidden><div class="ae-bar"><div class="ae-bar-in"></div></div><div class="ae-stage"></div><button class="btn btn-ghost sm" data-act="cancelAE">'+Tn('ae.cancel')+'</button></div>'+
       '</div>';
@@ -151,6 +155,7 @@ ML.views = (function(){
     /* step 3: media */
     const zone = app.querySelector('.dropzone'), fileInp = app.querySelector('.nw-file');
     app.querySelector('[data-act=pickFiles]').addEventListener('click', ()=>fileInp.click());
+    zone.addEventListener('click', ()=>fileInp.click());
     fileInp.addEventListener('change', ()=>handleFiles(fileInp.files));
     zone.addEventListener('dragover', e=>{ e.preventDefault(); zone.classList.add('over'); });
     zone.addEventListener('dragleave', ()=>zone.classList.remove('over'));
@@ -188,6 +193,25 @@ ML.views = (function(){
     /* step 4: voice */
     const vs = app.querySelector('.nw-vspeed');
     vs.addEventListener('input', ()=>app.querySelector('.nw-vspeed-v').textContent = parseFloat(vs.value).toFixed(1)+'x');
+    let listenEl = null, listenUrl = null;
+    app.querySelector('[data-act=listenVoice]').addEventListener('click', async ()=>{
+      const txt = app.querySelector('.nw-listen-text').value || Tn('voice.listenText');
+      const voice = app.querySelector('.nw-voice').value;
+      const btn = app.querySelector('[data-act=listenVoice]'), stopBtn = app.querySelector('[data-act=stopListen]');
+      /* stop any running preview first */
+      ML.voice.stopPreview();
+      btn.disabled = true;
+      const ok = await ML.voice.preview(txt, voice);
+      btn.disabled = false;
+      if(ok){
+        stopBtn.hidden = false;
+        const iv = setInterval(()=>{
+          if(!ML.voice.isPreviewing()){ clearInterval(iv); stopBtn.hidden = true; }
+        }, 300);
+        stopBtn.addEventListener('click', ()=>{ ML.voice.stopPreview(); stopBtn.hidden = true; });
+      } else L.toast(Tn('voice.playFail'), true);
+    });
+    app.querySelector('[data-act=stopListen]').addEventListener('click', ()=>{ ML.voice.stopPreview(); app.querySelector('[data-act=stopListen]').hidden = true; });
     app.querySelector('[data-act=genVoice]').addEventListener('click', async ()=>{
       if(!draft.scenes.length){ L.toast(Tn('sc.noScenes'), true); return; }
       const voice = app.querySelector('.nw-voice').value;
@@ -198,11 +222,31 @@ ML.views = (function(){
           const seg = await ML.voice.generateSegment(draft, sc, { voiceId: voice, speed: parseFloat(vs.value)||1 });
           draft.voiceSegments.push(seg);
         }
-        const box = app.querySelector('.nw-voice-segs');
-        box.innerHTML = draft.voiceSegments.map(v=>'<div class="nw-vseg"><span class="nw-sc-idx">'+String((draft.scenes.find(s=>s.id===v.sceneId)||{}).order||'?').padStart(2,'0')+'</span><span class="nw-sc-text">'+esc(v.text)+'</span><span class="nw-sc-dur">'+L.round(v.duration,1)+'s</span><span class="nw-v-status">'+(v.status==='real'?'●':'○')+'</span></div>').join('');
+        renderVoiceSegs();
         app.querySelector('[data-badge=voice]').textContent = draft.voiceSegments.length;
       }catch(e){ L.toast(String(e&&e.message||e), true); }
       app.querySelector('[data-act=genVoice]').disabled = false;
+    });
+    function renderVoiceSegs(){
+      const box = app.querySelector('.nw-voice-segs');
+      box.innerHTML = draft.voiceSegments.map(v=>'<div class="nw-vseg"><span class="nw-sc-idx">'+String((draft.scenes.find(s=>s.id===v.sceneId)||{}).order||'?').padStart(2,'0')+'</span><span class="nw-sc-text">'+esc(v.text)+'</span><span class="nw-sc-dur">'+L.round(v.duration,1)+'s</span><span class="nw-v-status">'+(v.status==='real'?'●':'○')+'</span><button class="btn btn-ghost xs" data-act="playVseg" data-id="'+v.id+'">'+Tn('voice.listen')+'</button></div>').join('');
+    }
+    app.addEventListener('click', async e2=>{
+      const b = e2.target.closest('[data-act=playVseg]');
+      if(!b) return;
+      const v = draft.voiceSegments.find(x=>x.id===b.dataset.id);
+      if(!v) return;
+      ML.voice.stopPreview();
+      const blob = await ML.voice.loadAudio(v).catch(()=>null);
+      if(blob){
+        if(listenUrl) URL.revokeObjectURL(listenUrl);
+        listenUrl = URL.createObjectURL(blob);
+        if(listenEl){ listenEl.pause(); listenEl = null; }
+        listenEl = new Audio(listenUrl);
+        await listenEl.play().catch(()=>L.toast(Tn('voice.playFail'), true));
+      } else {
+        await ML.voice.preview(v.text, v.voiceId);
+      }
     });
 
     /* step 5: auto edit */
@@ -226,7 +270,7 @@ ML.views = (function(){
         if(j){ stage.textContent = j.stage+' '+Math.round(j.progress)+'%'; bar.style.width = j.progress+'%'; }
       }, 120);
       try{
-        await ML.autoedit.run(draft, { voice: { voiceId: app.querySelector('.nw-voice').value, speed: parseFloat(vs.value)||1 } });
+        await ML.autoedit.run(draft, { style: app.querySelector('.nw-style').value, voice: { voiceId: app.querySelector('.nw-voice').value, speed: parseFloat(vs.value)||1 } });
         clearInterval(poll);
         await ML.store.saveProject(draft);
         ML.router.go('/projects/'+draft.id);
@@ -285,6 +329,14 @@ ML.views = (function(){
     });
   }
 
+  /* keyboard reference shown in Settings */
+  const SHORTCUTS = [
+    ['Space','kbd.play'],['⌘/Ctrl+Z','kbd.undo'],['⇧+⌘/Ctrl+Z','kbd.redo'],['⌘/Ctrl+S','kbd.save'],
+    ['⌘/Ctrl+C','kbd.copy'],['⌘/Ctrl+V','kbd.paste'],['⌘/Ctrl+D','kbd.dup'],['Del / ⌫','kbd.delete'],
+    ['S','kbd.split'],['←','kbd.prevFrame'],['→','kbd.nextFrame'],['⇧+←','kbd.seekBack'],['⇧+→','kbd.seekFwd'],
+    ['Home','kbd.home'],['End','kbd.end'],['M','kbd.marker'],['+ / -','kbd.zoom'],['⇧+Z','kbd.fit'],['Esc','kbd.deselect']
+  ];
+
   /* ============ SETTINGS ============ */
   async function settings(app){
     const cfg = await ML.providers.loadConfig();
@@ -303,6 +355,9 @@ ML.views = (function(){
           '<div class="st-row"><label>'+Tn('set.ttsEndpoint')+'</label><input class="inp" data-k="tts.endpoint" value="'+esc(cfg.tts.endpoint)+'" placeholder="https://api.example.com"></div>'+
           '<div class="st-row"><label>'+Tn('set.ttsKey')+'</label><input class="inp" data-k="tts.key" type="password" value="'+esc(cfg.tts.key)+'"></div>'+
           '<div class="st-row"><label>'+Tn('set.ttsVoice')+'</label><select class="inp" data-k="tts.voice">'+ML.providers.TTS.voices().map(v=>'<option'+(v===cfg.tts.voice?' selected':'')+'>'+v+'</option>').join('')+'</select></div>'+
+        '</section>'+
+        '<section class="st-card st-card-wide"><div class="st-title">'+Tn('set.shortcuts')+'</div><div class="st-desc">'+Tn('set.shortcuts.desc')+'</div>'+
+          '<table class="st-kbd">'+SHORTCUTS.map(s=>'<tr><td><kbd>'+s[0]+'</kbd></td><td>'+Tn(s[1])+'</td></tr>').join('')+'</table>'+
         '</section>'+
       '</div>'+
       '<div class="st-save"><button class="btn btn-primary" data-act="saveSettings">'+Tn('set.save')+'</button></div>';
