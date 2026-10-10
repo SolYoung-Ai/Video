@@ -1,6 +1,4 @@
 /* ============ ML.providers — AI Analysis + TTS Provider registry ============ */
-/* No real API is called. DEV MOCK is the active mode until a provider is configured.
-   Config lives in settings (LocalStorage/IndexedDB) — keys are never hard-coded. */
 ML.providers = (function(){
   const L = ML.lib;
 
@@ -49,6 +47,8 @@ ML.providers = (function(){
     }
   }
 
+  let _previewActive = false;
+
   const TTS = {
     async synthesize(text, voiceId){
       const v = voiceId || (config().tts && config().tts.voice) || 'Chinese Female 01';
@@ -67,18 +67,23 @@ ML.providers = (function(){
       return { audio: blob, duration: dur, provider: c.provider, voiceId: v, status: 'real' };
     },
     async preview(text, voiceId){
-      return new Promise(res => {
-        if(!window.speechSynthesis){ res(false); return; }
+      if(!window.speechSynthesis) return false;
+      return new Promise(res=>{
+        let settled = false;
+        const done = ok=>{ if(!settled){ settled = true; _previewActive = false; res(ok); } };
         const u = new SpeechSynthesisUtterance(text);
         u.lang = /[\u4e00-\u9fff]/.test(text) ? 'zh-CN' : 'en-US';
         u.rate = 1; u.pitch = 1;
+        u.onend = ()=>done(true);
+        u.onerror = ()=>done(false);
         window.speechSynthesis.cancel();
+        _previewActive = true;
         window.speechSynthesis.speak(u);
-        u.onend = ()=>res(true);
-        u.onerror = ()=>res(false);
+        setTimeout(()=>done(false), 45000);
       });
     },
-    stopPreview(){ if(window.speechSynthesis) window.speechSynthesis.cancel(); },
+    stopPreview(){ if(window.speechSynthesis) window.speechSynthesis.cancel(); _previewActive = false; },
+    isPreviewing(){ return _previewActive; },
     voices(){
       return ['Chinese Female 01','Chinese Female 02','Chinese Male 01','Chinese Male 02','English Female','English Male'];
     },
@@ -138,7 +143,8 @@ ML.providers = (function(){
     const rnd = Lx.mulberry32(seed);
     const scenePool = ['室内','户外','城市','自然','工作场景','生活场景','特写','全景'];
     return {
-      mock: true, provider: 'DEV_MOCK',
+      mock: true,
+      provider: 'DEV_MOCK',
       tags: Array.from(new Set(tags)).slice(0,6),
       labels: Array.from(new Set(tags)).slice(0,6),
       scene: scenePool[Math.floor(rnd()*scenePool.length)],
