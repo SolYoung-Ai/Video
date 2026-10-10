@@ -11,10 +11,14 @@ ML.timeline = (function(){
       timelineStart: opts.timelineStart||0, timelineEnd: opts.timelineEnd||1,
       transform: { scale: opts.scale||1, x: opts.x||0, y: opts.y||0 },
       speed: opts.speed||1, opacity: opts.opacity||1, volume: opts.volume||1,
-      muted: !!opts.muted, locked: !!opts.locked
+      muted: !!opts.muted, locked: !!opts.locked,
+      transition: opts.transition||0
     };
+    if(opts.rotation) c.transform.rotation = opts.rotation;
+    if(opts.crop) c.transform.crop = opts.crop;
     if(track==='voice'){ c.voiceId = opts.voiceId||null; c.duration = opts.duration||1; }
     if(track==='subtitle'){ c.text = opts.text||''; c.lines = opts.lines||[]; c.style = opts.style||{}; c.sceneId = opts.sceneId||null; }
+    if(track==='marker'){ c.text = opts.text||''; }
     return c;
   }
 

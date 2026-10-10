@@ -40,21 +40,42 @@ ML.script = (function(){
     return merged.filter(Boolean);
   }
 
-  const INTENT_HOOK = /^为什么|^为何|^怎么|^如何|^你知道吗|^是不是|^你还在|^注意|^重磅|^揭秘|^别再|^stop|^why|^how|^ever wonder|^did you know/i;
-  const INTENT_QUESTION = /？|\?|吗|呢|是不是|对不对/;
-  const INTENT_LIST = /第[一二三四五六七八九十\d]个|第[1-9]|^\d+[、.)]|首先|其次|最后|一是|二是|原因一|原因二|原因三|①|②|③/;
-  const INTENT_EXPLAIN = /因为|所以|原因|导致|意味着|其实|关键|本质上|换句话说|because|so|reason|actually|means/i;
-  const INTENT_CTA = /关注|点赞|转发|收藏|评论|关注我|双击|关注我们|follow|like|subscribe|comment|share/i;
-  const INTENT_CONCLUSION = /所以|总之|记住|核心|最后|最重要的是|总结|therefore|in short|remember|bottom line/i;
-  const INTENT_TRANSITION = /接下来|下面|其次|然后|再看|还有|next|then|also|another/i;
+  const INTENT_HOOK = /^为什么|^为何|^怎么|^如何|^你知道吗|^是不是|^你还在|^注意|^重磅|^揭秘|^别再|^stop|^why|^how|^ever wonder|^did you know|^你是否有|^有没有/i;
+  const INTENT_QUESTION = /？|\?|吗|呢|是不是|对不对|是否/;
+  const INTENT_CONTEXT = /很多人|许多人|现在|如今|一直以来|随着|在这个|如今|现代|今天|其实很多人|大多|通常|generally|nowadays|today|many people/i;
+  const INTENT_EXPLAIN = /因为|所以|原因|导致|意味着|其实|关键|本质上|换句话说|原理|机制|because|so|reason|actually|means|the reason/i;
+  const INTENT_PROOF = /比如|例如|举例|研究表明|数据显示|据统计|调查|实验|一个例子|比如说|for example|research|study|data|show|according/i;
+  const INTENT_STEPS = /第一步|第二步|首先|其次|然后|接下来|最后|方法|步骤|做法|先|再|之后|step|first|then|next|method/i;
+  const INTENT_LIST = /第[一二三四五六七八九十\d]个|第[1-9]|^\d+[、.)]|一是|二是|三是|原因一|原因二|原因三|①|②|③|1[、.]|2[、.]|3[、.]/;
+  const INTENT_CTA = /关注|点赞|转发|收藏|评论|关注我|双击|关注我们|评论区|follow|like|subscribe|comment|share/i;
+  const INTENT_CONCLUSION = /总之|记住|核心|最重要的是|总结|所以说|归根结底|因此|一句话|in short|remember|bottom line|all in all/i;
+  const INTENT_TRANSITION = /接下来|下面|其次|然后|再看|还有|除了|另外|next|then|also|another|moreover/i;
+
+  /* role → editing rhythm hint. pace>1 slows, <1 tightens; multi allows split shots */
+  const ROLE_PACE = {
+    'HOOK':        { pace: 0.85, multi: false, label: 'Hook' },
+    'CONTEXT':     { pace: 1.0,  multi: false, label: 'Context' },
+    'EXPLANATION': { pace: 1.15, multi: false, label: 'Explanation' },
+    'PROOF':       { pace: 1.0,  multi: false, label: 'Proof' },
+    'STEPS':       { pace: 0.9,  multi: true,  label: 'Steps' },
+    'LIST':        { pace: 0.9,  multi: true,  label: 'List' },
+    'TRANSITION':  { pace: 0.8,  multi: false, label: 'Transition' },
+    'CONCLUSION':  { pace: 1.1,  multi: false, label: 'Conclusion' },
+    'CTA':         { pace: 1.05, multi: false, label: 'CTA' },
+    'QUESTION':    { pace: 0.95, multi: false, label: 'Question' },
+    'EXPLANATION_FALLBACK': { pace: 1.05, multi: false, label: 'Explanation' }
+  };
 
   function detectIntent(text, idx, total){
     if(idx === 0 && INTENT_HOOK.test(text)) return 'Hook';
-    if(INTENT_QUESTION.test(text) && idx === 0) return 'Hook';
+    if(idx === 0 && INTENT_QUESTION.test(text)) return 'Hook';
     if(idx === total-1 && INTENT_CTA.test(text)) return 'CTA';
-    if(idx === total-1 && (INTENT_CONCLUSION.test(text) || total>1)) return 'Conclusion';
+    if(idx === total-1 && INTENT_CONCLUSION.test(text)) return 'Conclusion';
+    if(INTENT_PROOF.test(text)) return 'Proof';
+    if(INTENT_STEPS.test(text)) return 'Steps';
     if(INTENT_LIST.test(text)) return 'List';
     if(INTENT_EXPLAIN.test(text)) return 'Explanation';
+    if(INTENT_CONTEXT.test(text)) return 'Context';
     if(INTENT_TRANSITION.test(text)) return 'Transition';
     if(INTENT_QUESTION.test(text)) return 'Question';
     return 'Explanation';
@@ -74,8 +95,11 @@ ML.script = (function(){
       const intent = detectIntent(s, i, sentences.length);
       const tone = detectTone(s);
       const visualNeeds = visualNeedsFor(keywords, s);
+      const role = ROLE_PACE[intent] ? intent : 'EXPLANATION';
+      const rp = ROLE_PACE[role] || ROLE_PACE.EXPLANATION_FALLBACK;
       return {
         id: 'sc'+L.uid(), order: i+1, text: s, keywords, intent, tone, visualNeeds,
+        role, pace: rp.pace, multi: rp.multi,
         duration: ML.providers.estimateDuration(s),
         assetId: null, voiceId: null, confidence: 0, matchReasons: []
       };

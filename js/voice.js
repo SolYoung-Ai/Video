@@ -15,7 +15,7 @@ ML.voice = (function(){
     const key = await cacheKey(project, scene.text, voiceId, speed, pitch);
     const cached = await S.getSetting('vseg:'+key, null);
     if(cached){
-      return Object.assign({}, cached, { cached: true });
+      return Object.assign({}, cached, { id: 'v'+L.uid(), sceneId: scene.id, text: scene.text, audioKey: key, cached: true });
     }
     let res;
     try{
@@ -30,6 +30,10 @@ ML.voice = (function(){
     };
     /* store small metadata (audio blob lives in kv too when real — keep project JSON light) */
     await S.setSetting('vseg:'+key, { duration: seg.duration, provider: seg.provider, voiceId, speed, pitch, status: seg.status });
+    if(res.audio){
+      /* persist real audio so preview & restore survive refresh/history */
+      try{ await S.setSetting('vaudio:'+key, { blob: res.audio }); }catch(e){}
+    }
     return seg;
   }
 
@@ -45,9 +49,10 @@ ML.voice = (function(){
     return ML.providers.TTS.preview(text, voiceId);
   }
   function stopPreview(){ ML.providers.TTS.stopPreview(); }
+  function isPreviewing(){ return !!(ML.providers.TTS.isPreviewing && ML.providers.TTS.isPreviewing()); }
 
   /* audio waveform-free duration estimate for a scene (re-calculable) */
   function sceneDuration(seg){ return seg ? seg.duration : 2.5; }
 
-  return { generateSegment, loadAudio, preview, stopPreview, cacheKey, sceneDuration };
+  return { generateSegment, loadAudio, preview, stopPreview, isPreviewing, cacheKey, sceneDuration };
 })();

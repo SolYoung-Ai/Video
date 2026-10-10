@@ -2,10 +2,13 @@
 ML.matcher = (function(){
   const L = ML.lib;
 
-  /* weights */
-  const W = { semantic: 0.40, keyword: 0.25, visual: 0.15, duration: 0.10, ratio: 0.05, quality: 0.05 };
+  /* weights — calibrated toward the spec: semantic 35 / subject-action 15 /
+     visual coverage 15 / duration 10 / quality 10 / ratio 5 (continuity is
+     applied as a neighbour-reuse penalty, not a weight) */
+  const W = { semantic: 0.35, keyword: 0.15, visual: 0.15, duration: 0.10, quality: 0.10, ratio: 0.05 };
+  const REUSE_PENALTY = 0.15, NEIGHBOUR_PENALTY = 0.12;
 
-  function score(scene, asset, ratio, usedCount){
+  function score(scene, asset, ratio, usedCount, prevAssetId){
     let semantic = 0, keyword = 0, visual = 0, duration = 0, ratioFit = 0, quality = 0;
     const tags = ((asset.tags||[]).length ? asset.tags : ((asset.analysis && asset.analysis.tags) || [])).map(t=>String(t).toLowerCase());
     const sceneWords = (scene.text||'').toLowerCase();
@@ -40,11 +43,12 @@ ML.matcher = (function(){
     /* quality: resolution */
     quality = asset.width ? L.clamp(Math.min(1, asset.width/1080), 0.35, 1) : 0.5;
 
-    /* reuse penalty */
-    const reuse = Math.max(0, (usedCount||0)-1) * 0.18;
+    /* continuity + reuse penalties */
+    const reuse = Math.max(0, (usedCount||0)-1) * REUSE_PENALTY;
+    const neighbour = prevAssetId && prevAssetId===asset.id ? NEIGHBOUR_PENALTY : 0;
 
     const total = semantic*W.semantic + keyword*W.keyword + visual*W.visual + duration*W.duration + ratioFit*W.ratio + quality*W.quality;
-    const scoreVal = L.clamp(total - reuse, 0, 1);
+    const scoreVal = L.clamp(total - reuse - neighbour, 0, 1);
     const reasons = [];
     if(hitSem.length) reasons.push(...hitSem.slice(0,3));
     if(kwHit.length) reasons.push(...kwHit.slice(0,2));
@@ -55,11 +59,12 @@ ML.matcher = (function(){
   function matchAll(scenes, assets, ratio, opts){
     opts = opts || {};
     const used = {};
+    let prevId = null;
     return scenes.map(scene => {
       const scored = assets
         .filter(a=>a.type==='video'||a.type==='image')
         .map(a=>{
-          const s = score(scene, a, ratio, used[a.id]||0);
+          const s = score(scene, a, ratio, used[a.id]||0, prevId);
           return { asset: a, ...s };
         })
         .sort((a,b)=>b.score-a.score);
@@ -70,6 +75,7 @@ ML.matcher = (function(){
         used[best.asset.id] = (used[best.asset.id]||0)+1;
         weak = best.score < 40;
       }
+      prevId = chosen ? chosen.id : prevId;
       return { scene, asset: chosen, confidence, reasons, weak, alternatives: scored.slice(0,3) };
     });
   }
@@ -82,5 +88,5 @@ ML.matcher = (function(){
       .slice(0,3);
   }
 
-  return { score, matchAll, recommendForScene, W };
+  return { score, matchAll, recommendForScene, W, REUSE_PENALTY, NEIGHBOUR_PENALTY };
 })();
